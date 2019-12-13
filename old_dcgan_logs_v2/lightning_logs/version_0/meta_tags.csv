@@ -1,0 +1,6 @@
+key,value
+batch_size,64
+lr,0.01
+latent_dim,100
+gen_conv_channels,"[80, 40, 20]"
+disc_conv_channels,"[16, 32, 16]"
