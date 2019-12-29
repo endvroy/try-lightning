@@ -122,7 +122,6 @@ class GAN(pl.LightningModule):
     def on_batch_end(self):
         self.trainer.optimizers = self.optimizers_bak
 
-
     def on_epoch_end(self):
         z = self.sample_z(32)
 
@@ -146,7 +145,7 @@ if __name__ == '__main__':
 
     from pytorch_lightning.callbacks import ModelCheckpoint
 
-    save_path = 'wsgan_gp_logs_toy_4'
+    save_path = 'wsgan_gp_logs_toy'
     # DEFAULTS used by the Trainer
     checkpoint_callback = ModelCheckpoint(
         filepath=f'logs/{save_path}/checkpoints',
@@ -158,7 +157,9 @@ if __name__ == '__main__':
     trainer = pl.Trainer(gpus=1,
                          default_save_path=f'logs/{save_path}',
                          early_stop_callback=False,
-                         max_nb_epochs=1000,
-                         print_nan_grads=True)
+                         max_nb_epochs=30,
+                         row_log_interval=1,
+                         # print_nan_grads=True
+                         )
     # gan_model.summary()
     trainer.fit(gan_model)
