@@ -12,51 +12,7 @@ from torch.utils.data import DataLoader
 from torchvision.datasets import MNIST
 
 import pytorch_lightning as pl
-
-
-class Generator(nn.Module):
-    def __init__(self, latent_dim, img_shape):
-        super(Generator, self).__init__()
-
-        def block(in_feat, out_feat, normalize=True):
-            layers = [nn.Linear(in_feat, out_feat)]
-            if normalize:
-                layers.append(nn.BatchNorm1d(out_feat, 0.8))
-            layers.append(nn.LeakyReLU(0.2, inplace=True))
-            return layers
-
-        self.model = nn.Sequential(
-            *block(latent_dim, 128, normalize=False),
-            *block(128, 256),
-            *block(256, 512),
-            *block(512, 1024),
-            nn.Linear(1024, 28 * 28),
-            nn.Tanh()
-        )
-
-    def forward(self, z):
-        img = self.model(z)
-        img = img.view(img.size(0), 1, 28, 28)
-        return img
-
-
-class Discriminator(nn.Module):
-    def __init__(self, img_shape):
-        super(Discriminator, self).__init__()
-
-        self.model = nn.Sequential(
-            nn.Linear(28 * 28, 512),
-            nn.LeakyReLU(0.2, inplace=True),
-            nn.Linear(512, 256),
-            nn.LeakyReLU(0.2, inplace=True),
-            nn.Linear(256, 1),
-        )
-
-    def forward(self, img):
-        img_flat = img.view(img.shape[0], -1)
-        validity = self.model(img_flat)
-
-        return validity
+from models import ToyGen as Generator, ToyDisc as Discriminator
 
 
 class GAN(pl.LightningModule):
@@ -65,16 +21,16 @@ class GAN(pl.LightningModule):
         self.hparams = hparams
 
         # networks
-        self.generator = Generator(self.hparams.latent_dim, self.hparams.model_dim)
-        self.discriminator = Discriminator(self.hparams.model_dim)
-
-        # cache for generated images
-        self.generated_imgs = None
-        self.last_imgs = None
+        self.generator = Generator(self.hparams.latent_dim)
+        self.discriminator = Discriminator()
 
         self.critic_counter = 0
 
         # self.example_input_array = torch.zeros((3, 100, 1, 1))
+
+    def sample_z(self, batch_size):
+        z = torch.randn(batch_size, self.hparams.latent_dim, 1, 1).to(next(self.generator.parameters()).device)
+        return z
 
     def forward(self, z):
         return self.generator(z)
@@ -85,38 +41,30 @@ class GAN(pl.LightningModule):
     def wasserstein_loss(self, real_scores, fake_scores):
         return torch.mean(fake_scores) - torch.mean(real_scores)
 
-    def grad_penalty(self, imgs):
-        alpha = torch.rand(imgs.shape[0], 1, 1, 1).to(imgs.device)
-        interpolated = alpha * imgs + (1 - alpha) * self.generated_imgs.detach()
-        interpolated.requires_grad = True
+    def grad_penalty(self, generated_imgs, real_imgs):
+        alpha = torch.rand(real_imgs.shape[0], 1, 1, 1).to(real_imgs.device)
+        interpolated = alpha * real_imgs + (1 - alpha) * generated_imgs
+        interpolated.requires_grad_(True)
         disc_interpolates = self.discriminator(interpolated)
         gradients = torch.autograd.grad(outputs=disc_interpolates, inputs=interpolated,
-                                        grad_outputs=torch.ones(disc_interpolates.size()).to(imgs.device),
-                                        create_graph=True, retain_graph=True, only_inputs=True)[0]
+                                        grad_outputs=torch.ones_like(disc_interpolates).to(real_imgs.device),
+                                        create_graph=True)[0]
 
-        grad_penalty = ((gradients.norm(2, dim=1) - 1) ** 2).mean()
+        grad_penalty = ((gradients.norm(2, dim=(1, 2, 3)) - 1) ** 2).mean()
         return grad_penalty
 
-    def training_step(self, batch, batch_nb, optimizer_i):
+    def training_step(self, batch, batch_nb):
         imgs, _ = batch
-        self.last_imgs = imgs
 
         # train generator
-        if optimizer_i == 0:
-            if self.critic_counter < hparams.disc_per_gen:
-                self.critic_counter += 1
-                return {'loss': torch.tensor(-1)}
-            else:
-                self.critic_counter = 0
-
+        if self.optim_idx == 0:
             # sample noise
-            z = torch.randn(imgs.size(0), self.hparams.latent_dim).to(imgs.device)
-
+            z = self.sample_z(imgs.size(0))
             # generate images
-            self.generated_imgs = self.forward(z)
-
-            # adversarial loss is binary cross-entropy
-            g_loss = self.adversarial_loss(self.discriminator(self.generated_imgs))
+            generated_imgs = self.forward(z)
+            # adversarial loss
+            critic_responses = self.discriminator(generated_imgs)
+            g_loss = self.adversarial_loss(critic_responses)
             tqdm_dict = {'g_loss': g_loss}
             output = OrderedDict({
                 'loss': g_loss,
@@ -126,22 +74,23 @@ class GAN(pl.LightningModule):
             return output
 
         # train discriminator
-        if optimizer_i == 1:
+        if self.optim_idx == 1:
             with torch.no_grad():
-                z = torch.randn(imgs.size(0), self.hparams.latent_dim).to(imgs.device)
-                self.generated_imgs = self.forward(z)
+                z = self.sample_z(imgs.size(0))
+                generated_imgs = self.forward(z)
 
             # Measure discriminator's ability to classify real from generated samples
             real_scores = self.discriminator(imgs)
 
             # how well can it label as fake?
-            fake_scores = self.discriminator(self.generated_imgs.detach())
+            fake_scores = self.discriminator(generated_imgs)
 
             ws_loss = self.wasserstein_loss(real_scores, fake_scores)
-            grad_penalty = self.grad_penalty(imgs)
+            grad_penalty = self.grad_penalty(generated_imgs, imgs)
             d_loss = ws_loss + grad_penalty
 
-            tqdm_dict = {'d_loss': d_loss}
+            tqdm_dict = {'d_loss': d_loss,
+                         'gp': grad_penalty}
             output = OrderedDict({
                 'loss': d_loss,
                 'progress_bar': tqdm_dict,
@@ -149,30 +98,33 @@ class GAN(pl.LightningModule):
             })
             return output
 
-    def backward(self, use_amp, loss, optimizer):
-        if loss == -1:
-            return
-        else:
-            return super(GAN, self).backward(use_amp, loss, optimizer)
-
     def configure_optimizers(self):
         lr = self.hparams.lr
-        beta_1 = self.hparams.beta_1
-        beta_2 = self.hparams.beta_2
-
-        opt_g = torch.optim.Adam(self.generator.parameters(), lr=lr, betas=(beta_1, beta_2))
-        opt_d = torch.optim.Adam(self.discriminator.parameters(), lr=lr, betas=(beta_1, beta_2))
+        opt_g = torch.optim.Adam(self.generator.parameters(), lr=lr)
+        opt_d = torch.optim.Adam(self.discriminator.parameters(), lr=lr)
         return [opt_g, opt_d], []
 
     @pl.data_loader
     def train_dataloader(self):
         transform = transforms.Compose([transforms.ToTensor(),
-                                        transforms.Normalize([0.5], [0.5])])
+                                        # transforms.Normalize([0.5], [0.5])
+                                        ])
         dataset = MNIST(os.getcwd(), train=True, download=True, transform=transform)
-        return DataLoader(dataset, batch_size=self.hparams.batch_size)
+        return DataLoader(dataset, batch_size=self.hparams.batch_size, shuffle=True)
+
+    def on_batch_start(self, batch):
+        self.optimizers_bak = self.trainer.optimizers
+        self.optim_idx = self.trainer.batch_nb % 2
+        self.trainer.optimizers = [self.optimizers_bak[self.optim_idx]]
+        self.trainer.optimizers[0].zero_grad()
+        pass
+
+    def on_batch_end(self):
+        self.trainer.optimizers = self.optimizers_bak
+
 
     def on_epoch_end(self):
-        z = torch.randn(32, self.hparams.latent_dim).to(self.last_imgs.device)
+        z = self.sample_z(32)
 
         # log sampled images
         sample_imgs = self.forward(z)
@@ -182,33 +134,31 @@ class GAN(pl.LightningModule):
 
 if __name__ == '__main__':
     args = {
-        'batch_size': 64,
-        'lr': 1e-4,
-        'beta_1': 0.5,
-        'beta_2': 0.9,
-        'latent_dim': 100,
+        'batch_size': 100,
+        'lr': 1e-3,
+        'latent_dim': 64,
         'model_dim': 128,
         'gp_lambda': 10,
-        'disc_per_gen': 8
+        'disc_per_gen': 1
     }
     hparams = Namespace(**args)
     gan_model = GAN(hparams)
 
     from pytorch_lightning.callbacks import ModelCheckpoint
 
-    save_path = 'wsgan_gp_logs_v5'
+    save_path = 'wsgan_gp_logs_toy_4'
     # DEFAULTS used by the Trainer
     checkpoint_callback = ModelCheckpoint(
-        filepath=f'{save_path}/checkpoints',
+        filepath=f'logs/{save_path}/checkpoints',
         save_best_only=False,
         verbose=True,
     )
 
     # most basic trainer, uses good defaults (1 gpu)
     trainer = pl.Trainer(gpus=1,
-                         default_save_path=f'{save_path}',
-                         checkpoint_callback=checkpoint_callback,
-                         early_stop_callback=None,
-                         max_nb_epochs=100)
+                         default_save_path=f'logs/{save_path}',
+                         early_stop_callback=False,
+                         max_nb_epochs=1000,
+                         print_nan_grads=True)
     # gan_model.summary()
     trainer.fit(gan_model)
