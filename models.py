@@ -4,7 +4,7 @@ import torchvision
 
 
 class SimpleGenerator(nn.Module):
-    def __init__(self, latent_dim, img_shape):
+    def __init__(self, latent_dim):
         super(SimpleGenerator, self).__init__()
 
         def block(in_feat, out_feat, normalize=True):
@@ -30,7 +30,7 @@ class SimpleGenerator(nn.Module):
 
 
 class SimpleDiscriminator(nn.Module):
-    def __init__(self, img_shape):
+    def __init__(self):
         super(SimpleDiscriminator, self).__init__()
 
         self.model = nn.Sequential(
