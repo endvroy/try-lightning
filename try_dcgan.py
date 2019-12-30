@@ -67,7 +67,7 @@ class Discriminator(nn.Module):
 
 
 class OldDiscriminator(nn.Module):
-    def __init__(self,inp_channels, conv_channels):
+    def __init__(self, inp_channels, conv_channels):
         super(OldDiscriminator, self).__init__()
         self.main = nn.Sequential(
             # input is (gan_args.nc) x 28 x 28
