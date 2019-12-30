@@ -96,3 +96,79 @@ class ToyDisc(nn.Module):
 
     def forward(self, x):
         return self.model(x)
+
+
+class DCGen(nn.Module):
+    def __init__(self, latent_dim, conv_channels, out_channels):
+        super(DCGen, self).__init__()
+        self.model = nn.Sequential(
+            # input is Z, going into a convolution
+            nn.ConvTranspose2d(latent_dim, conv_channels[0],
+                               4, stride=1, bias=False),
+            nn.BatchNorm2d(conv_channels[0]),
+            nn.ReLU(True),
+            nn.ConvTranspose2d(conv_channels[0], conv_channels[1],
+                               4, stride=2, padding=1, bias=False),
+            nn.BatchNorm2d(conv_channels[1]),
+            nn.ReLU(True),
+            nn.ConvTranspose2d(conv_channels[1], conv_channels[2],
+                               4, stride=2, padding=1, bias=False),
+            nn.BatchNorm2d(conv_channels[2]),
+            nn.ReLU(True),
+            nn.ConvTranspose2d(conv_channels[2], out_channels,
+                               2, stride=2, padding=2, bias=False),
+            nn.ReLU(True)
+        )
+
+    def forward(self, z):
+        img = self.model(z)
+        return img
+
+
+class DCDisc(nn.Module):
+    def __init__(self, inp_channels, conv_channels):
+        super(DCDisc, self).__init__()
+        self.model = nn.Sequential(
+            nn.Conv2d(inp_channels, conv_channels[0], (2, 2)),
+            nn.LeakyReLU(inplace=True),
+            nn.Conv2d(conv_channels[0], conv_channels[1], (2, 2)),
+            nn.LeakyReLU(inplace=True),
+            nn.BatchNorm2d(conv_channels[1]),
+            nn.Conv2d(conv_channels[1], conv_channels[2], (5, 5), dilation=2),
+            nn.LeakyReLU(inplace=True),
+            nn.Conv2d(conv_channels[2], conv_channels[3], (4, 4), stride=4),
+            nn.LeakyReLU(inplace=True),
+            nn.BatchNorm2d(conv_channels[3]),
+            nn.Conv2d(conv_channels[3], conv_channels[4], (2, 2), dilation=2),
+            nn.LeakyReLU(inplace=True),
+            nn.Conv2d(conv_channels[4], 1, (2, 2)),
+            nn.Sigmoid()
+        )
+
+    def forward(self, img):
+        out = self.model(img)
+        return out
+
+
+class OldDCDisc(nn.Module):
+    def __init__(self, inp_channels, conv_channels):
+        super(OldDCDisc, self).__init__()
+        self.main = nn.Sequential(
+            # input is (gan_args.nc) x 28 x 28
+            nn.Conv2d(inp_channels, conv_channels[0], 4, 2, 3, bias=False),
+            nn.LeakyReLU(0.2, inplace=True),
+            # state size. gan_args.ndf x 16 x 16
+            nn.Conv2d(conv_channels[0], conv_channels[1], 4, 2, 1, bias=False),
+            nn.BatchNorm2d(conv_channels[1]),
+            nn.LeakyReLU(0.2, inplace=True),
+            # state size. (gan_args.ndf*2) x 8 x 8
+            nn.Conv2d(conv_channels[1], conv_channels[2], 4, 2, 1, bias=False),
+            nn.BatchNorm2d(conv_channels[2]),
+            nn.LeakyReLU(0.2, inplace=True),
+            # state size. (gan_args.ndf*4) x 4 x 4
+            nn.Conv2d(conv_channels[2], 1, 4, 1, 0, bias=False),
+            nn.Sigmoid()
+        )
+
+    def forward(self, inp):
+        return self.main(inp)
