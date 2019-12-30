@@ -126,7 +126,8 @@ class GAN(pl.LightningModule):
         z = self.sample_z(32)
 
         # log sampled images
-        sample_imgs = self.forward(z)
+        with torch.no_grad():
+            sample_imgs = self.forward(z)
         grid = torchvision.utils.make_grid(sample_imgs)
         self.logger.experiment.add_image(f'generated_images', grid, self.current_epoch)
 
