@@ -1,3 +1,4 @@
+import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torchvision
@@ -23,6 +24,10 @@ class SimpleGenerator(nn.Module):
             nn.Sigmoid()
         )
 
+    def sample_z(self, batch_size):
+        z = torch.randn(batch_size, self.hparams.latent_dim)
+        return z
+
     def forward(self, z):
         img = self.model(z)
         img = img.view(img.size(0), 1, 28, 28)
@@ -30,9 +35,10 @@ class SimpleGenerator(nn.Module):
 
 
 class SimpleDiscriminator(nn.Module):
-    def __init__(self):
+    def __init__(self, sigm=False):
         super(SimpleDiscriminator, self).__init__()
 
+        self.sigm = sigm
         self.model = nn.Sequential(
             nn.Linear(28 * 28, 512),
             nn.LeakyReLU(0.2, inplace=True),
@@ -45,6 +51,8 @@ class SimpleDiscriminator(nn.Module):
         img_flat = img.view(img.shape[0], -1)
         validity = self.model(img_flat)
 
+        if self.sigm:
+            validity = F.sigmoid(validity)
         return validity
 
 
@@ -73,10 +81,15 @@ class ToyGen(nn.Module):
     def forward(self, x):
         return self.model(x)
 
+    def sample_z(self, batch_size):
+        z = torch.randn(batch_size, self.hparams.latent_dim, 1, 1)
+        return z
+
 
 class ToyDisc(nn.Module):
-    def __init__(self):
+    def __init__(self, sigm=False):
         super(ToyDisc, self).__init__()
+        self.sigm = sigm
         linear = nn.Sequential(
             nn.Linear(128 * 7 * 7, 1024),
             nn.ReLU(),
@@ -84,7 +97,6 @@ class ToyDisc(nn.Module):
         )
 
         vgg = torchvision.models.vgg11(pretrained=False)
-        # conv = vgg.features[:11]
         conv = vgg.features[:6]
 
         self.model = nn.Sequential(
@@ -95,39 +107,46 @@ class ToyDisc(nn.Module):
         )
 
     def forward(self, x):
-        return self.model(x)
+        x = self.model(x)
+        if self.sigm:
+            x = F.sigmoid(x)
+        return x
 
 
-class DCGen(nn.Module):
+class MyDCGen(nn.Module):
     def __init__(self, latent_dim, conv_channels, out_channels):
-        super(DCGen, self).__init__()
+        super(MyDCGen, self).__init__()
         self.model = nn.Sequential(
             # input is Z, going into a convolution
             nn.ConvTranspose2d(latent_dim, conv_channels[0],
                                4, stride=1, bias=False),
             nn.BatchNorm2d(conv_channels[0]),
-            nn.ReLU(True),
+            nn.LeakyReLU(True),
             nn.ConvTranspose2d(conv_channels[0], conv_channels[1],
                                4, stride=2, padding=1, bias=False),
             nn.BatchNorm2d(conv_channels[1]),
-            nn.ReLU(True),
+            nn.LeakyReLU(True),
             nn.ConvTranspose2d(conv_channels[1], conv_channels[2],
                                4, stride=2, padding=1, bias=False),
             nn.BatchNorm2d(conv_channels[2]),
-            nn.ReLU(True),
+            nn.LeakyReLU(True),
             nn.ConvTranspose2d(conv_channels[2], out_channels,
                                2, stride=2, padding=2, bias=False),
-            nn.ReLU(True)
+            nn.Sigmoid()
         )
+
+    def sample_z(self, batch_size):
+        z = torch.randn(batch_size, self.hparams.latent_dim, 1, 1)
+        return z
 
     def forward(self, z):
         img = self.model(z)
         return img
 
 
-class DCDisc(nn.Module):
+class MyDCDisc(nn.Module):
     def __init__(self, inp_channels, conv_channels):
-        super(DCDisc, self).__init__()
+        super(MyDCDisc, self).__init__()
         self.model = nn.Sequential(
             nn.Conv2d(inp_channels, conv_channels[0], (2, 2)),
             nn.LeakyReLU(inplace=True),
@@ -150,9 +169,10 @@ class DCDisc(nn.Module):
         return out
 
 
-class OldDCDisc(nn.Module):
-    def __init__(self, inp_channels, conv_channels):
-        super(OldDCDisc, self).__init__()
+class MyOldDCDisc(nn.Module):
+    def __init__(self, inp_channels, conv_channels, sigm=False):
+        super(MyOldDCDisc, self).__init__()
+        self.sigm = sigm
         self.main = nn.Sequential(
             # input is (gan_args.nc) x 28 x 28
             nn.Conv2d(inp_channels, conv_channels[0], 4, 2, 3, bias=False),
@@ -167,8 +187,11 @@ class OldDCDisc(nn.Module):
             nn.LeakyReLU(0.2, inplace=True),
             # state size. (gan_args.ndf*4) x 4 x 4
             nn.Conv2d(conv_channels[2], 1, 4, 1, 0, bias=False),
-            nn.Sigmoid()
+            # nn.Sigmoid()
         )
 
     def forward(self, inp):
-        return self.main(inp)
+        x = self.main(inp)
+        if self.sigm:
+            x = F.sigmoid(x)
+        return x

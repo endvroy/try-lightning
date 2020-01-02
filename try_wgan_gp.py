@@ -15,9 +15,9 @@ import pytorch_lightning as pl
 from models import ToyGen as Generator, ToyDisc as Discriminator
 
 
-class GAN(pl.LightningModule):
+class WGAN_GP(pl.LightningModule):
     def __init__(self, hparams):
-        super(GAN, self).__init__()
+        super(WGAN_GP, self).__init__()
         self.hparams = hparams
 
         # networks
@@ -29,7 +29,7 @@ class GAN(pl.LightningModule):
         # self.example_input_array = torch.zeros((3, 100, 1, 1))
 
     def sample_z(self, batch_size):
-        z = torch.randn(batch_size, self.hparams.latent_dim, 1, 1).to(next(self.generator.parameters()).device)
+        z = self.generator.sample_z(batch_size).to(next(self.generator.parameters()).device)
         return z
 
     def forward(self, z):
@@ -142,7 +142,7 @@ if __name__ == '__main__':
         'disc_per_gen': 1
     }
     hparams = Namespace(**args)
-    gan_model = GAN(hparams)
+    gan_model = WGAN_GP(hparams)
 
     from pytorch_lightning.callbacks import ModelCheckpoint
 
