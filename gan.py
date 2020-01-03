@@ -15,14 +15,14 @@ import pytorch_lightning as pl
 from models import DCGen as Generator, DCDisc as Discriminator
 
 
-class WGAN_GP(pl.LightningModule):
+class GAN(pl.LightningModule):
     def __init__(self, hparams):
-        super(WGAN_GP, self).__init__()
+        super(GAN, self).__init__()
         self.hparams = hparams
 
         # networks
         self.generator = Generator(self.hparams.latent_dim, self.hparams.model_dim, 1)
-        self.discriminator = Discriminator(self.hparams.model_dim, 1)
+        self.discriminator = Discriminator(self.hparams.model_dim, 1, sigm=True)
 
         self.critic_counter = 0
 
@@ -35,11 +35,12 @@ class WGAN_GP(pl.LightningModule):
     def forward(self, z):
         return self.generator(z)
 
-    def adversarial_loss(self, critic_responses):
-        return -torch.mean(critic_responses)
+    def adversarial_loss(self, disc_responses):
+        return F.binary_cross_entropy(disc_responses, torch.ones_like(disc_responses))
 
-    def wasserstein_loss(self, real_scores, fake_scores):
-        return torch.mean(fake_scores) - torch.mean(real_scores)
+    def minmax_loss(self, real_scores, fake_scores):
+        return F.binary_cross_entropy(real_scores, torch.ones_like(real_scores)) + \
+               F.binary_cross_entropy(fake_scores, torch.zeros_like(fake_scores))
 
     def grad_penalty(self, generated_imgs, real_imgs):
         alpha = torch.rand(real_imgs.shape[0], 1, 1, 1).to(real_imgs.device)
@@ -85,12 +86,13 @@ class WGAN_GP(pl.LightningModule):
             # how well can it label as fake?
             fake_scores = self.discriminator(generated_imgs)
 
-            ws_loss = self.wasserstein_loss(real_scores, fake_scores)
-            grad_penalty = self.grad_penalty(generated_imgs, imgs)
-            d_loss = ws_loss + grad_penalty
+            minmax_loss = self.minmax_loss(real_scores, fake_scores)
+            # grad_penalty = self.grad_penalty(generated_imgs, imgs)
+            d_loss = minmax_loss
 
             tqdm_dict = {'d_loss': d_loss,
-                         'gp': grad_penalty}
+                         # 'gp': grad_penalty
+                         }
             output = OrderedDict({
                 'loss': d_loss,
                 'progress_bar': tqdm_dict,
@@ -143,11 +145,11 @@ if __name__ == '__main__':
         'disc_per_gen': 1
     }
     hparams = Namespace(**args)
-    gan_model = WGAN_GP(hparams)
+    gan_model = GAN(hparams)
 
     from pytorch_lightning.callbacks import ModelCheckpoint
 
-    save_path = 'wsgan_gp_dc_logs'
+    save_path = 'gan_dc_logs'
     # DEFAULTS used by the Trainer
     checkpoint_callback = ModelCheckpoint(
         filepath=f'logs/{save_path}/checkpoints',
